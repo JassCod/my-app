@@ -1,5 +1,6 @@
 import { ClipboardList, FileText, Home, Plus, Send, Settings as SettingsIcon, UserPlus, Users, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { SheetsProvider, useSheets } from './components/Sheets';
 import { navigate, useRoute, useStore, useToast } from './lib/store';
 import { Dashboard } from './pages/Dashboard';
@@ -48,7 +49,7 @@ export default function App() {
       <Backdrop />
       <div className={`app ${solo ? 'solo' : ''}`}>
         <main key={route.path} className="view">
-          {page}
+          <ErrorBoundary resetKey={route.path}>{page}</ErrorBoundary>
         </main>
         {!solo && <BottomNav active={'/' + (first ?? '')} />}
         <Toasts />
@@ -80,6 +81,8 @@ function BottomNav({ active }: { active: string }) {
   const sheets = useSheets();
   const { state } = useStore();
   const [fab, setFab] = useState(false);
+  // Never leave the quick-action overlay covering a page after navigating away.
+  useEffect(() => setFab(false), [active]);
   const act = (fn: () => void) => () => {
     setFab(false);
     fn();

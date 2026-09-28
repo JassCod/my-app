@@ -6,7 +6,9 @@ import { PRIORITY_LABEL, STATUS_LABEL, initials } from '../lib/utils';
 /** Card that tilts in 3D towards the pointer with a moving light glare — the "illusion" surface. */
 export function TiltCard({ children, className = '', style, onClick, intensity = 8 }: { children: ReactNode; className?: string; style?: CSSProperties; onClick?: () => void; intensity?: number }) {
   const ref = useRef<HTMLDivElement>(null);
+  // Mouse/pen: follow the pointer. Touch: tilt once where the finger lands (a moving finger is scrolling).
   const move = (e: React.PointerEvent) => {
+    if (e.pointerType === 'touch' && e.type === 'pointermove') return;
     const el = ref.current;
     if (!el || document.documentElement.dataset.effects === 'off') return;
     const r = el.getBoundingClientRect();
@@ -29,8 +31,10 @@ export function TiltCard({ children, className = '', style, onClick, intensity =
       className={`tilt glass ${onClick ? 'pressable' : ''} ${className}`}
       style={style}
       onPointerMove={move}
+      onPointerDown={move}
       onPointerLeave={leave}
       onPointerUp={leave}
+      onPointerCancel={leave}
       onClick={onClick}
       role={onClick ? 'button' : undefined}
       tabIndex={onClick ? 0 : undefined}
