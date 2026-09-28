@@ -1,7 +1,55 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createOps, type Change, type Ops } from './ops';
 import { createSeed } from './seed';
-import type { Activity, AppState, DailyReport, Member, Note, Settings, Task } from './types';
-import { memberName, uid } from './utils';
+import type { Access, AppState, Session, Settings } from './types';
+import { uid } from './utils';
+
+export interface Store extends Ops {
+  state: AppState;
+  session: Session;
+  /** Managers can do everything; colleagues only work on their own tasks and reports. */
+  can: { manage: boolean };
+  updateSettings: (patch: Partial<Settings>) => void;
+  // single-device demo mode only
+  replaceState?: (s: AppState) => void;
+  resetDemo?: () => void;
+  clearAll?: () => void;
+  // shared cloud mode only
+  inviteLink?: (memberId: string) => Promise<string>;
+  setAccess?: (uid: string, role: Access) => Promise<void>;
+  signOut?: () => Promise<void>;
+}
+
+export const StoreCtx = createContext<Store | null>(null);
+
+export function useStore() {
+  const ctx = useContext(StoreCtx);
+  if (!ctx) throw new Error('useStore outside provider');
+  return ctx;
+}
+
+/* ---------- Per-device preferences (theme, motion) ---------- */
+
+const PREFS = 'teampulse.prefs.v1';
+type Prefs = Pick<Settings, 'theme' | 'effects'>;
+export function loadPrefs(): Prefs {
+  try {
+    const p = JSON.parse(localStorage.getItem(PREFS) || 'null');
+    if (p && (p.theme === 'dark' || p.theme === 'light')) return { theme: p.theme, effects: p.effects !== false };
+  } catch {
+    /* ignore */
+  }
+  return { theme: 'dark', effects: true };
+}
+export function savePrefs(p: Prefs) {
+  try {
+    localStorage.setItem(PREFS, JSON.stringify(p));
+  } catch {
+    /* ignore */
+  }
+}
+
+/* ---------- Single-device demo store (no accounts) ---------- */
 
 const KEY = 'teampulse.state.v1';
 
@@ -18,31 +66,28 @@ function load(): AppState {
   return createSeed();
 }
 
-type TaskInput = Omit<Task, 'id' | 'createdAt' | 'notes' | 'completedAt'>;
-type ReportInput = Omit<DailyReport, 'id' | 'createdAt' | 'managerNote' | 'rating' | 'reviewed'> & Partial<Pick<DailyReport, 'managerNote' | 'rating' | 'reviewed'>>;
-
-interface Store {
-  state: AppState;
-  addTask: (t: TaskInput) => Task;
-  updateTask: (id: string, patch: Partial<Task>) => void;
-  deleteTask: (id: string) => void;
-  addNote: (taskId: string, text: string, author?: Note['author']) => void;
-  addMember: (m: Omit<Member, 'id' | 'joinedAt'>) => Member;
-  updateMember: (id: string, patch: Partial<Member>) => void;
-  deleteMember: (id: string) => void;
-  upsertReport: (r: ReportInput) => void;
-  updateReport: (id: string, patch: Partial<DailyReport>) => void;
-  deleteReport: (id: string) => void;
-  updateSettings: (patch: Partial<Settings>) => void;
-  replaceState: (s: AppState) => void;
-  resetDemo: () => void;
-  clearAll: () => void;
+function applyLocal(s: AppState, changes: Change[]): AppState {
+  const next = { ...s, members: [...s.members], tasks: [...s.tasks], reports: [...s.reports], activity: [...s.activity] };
+  for (const c of changes) {
+    if (c.coll === 'activity') {
+      if (c.doc) next.activity = [c.doc as never, ...next.activity].slice(0, 80);
+      continue;
+    }
+    if (c.coll !== 'members' && c.coll !== 'tasks' && c.coll !== 'reports') continue;
+    const list = next[c.coll] as { id: string }[];
+    const i = list.findIndex((x) => x.id === c.id);
+    if (!c.doc) {
+      if (i >= 0) list.splice(i, 1);
+    } else if (i >= 0) list[i] = c.doc as never;
+    else list.unshift(c.doc as never);
+  }
+  return next;
 }
 
-const Ctx = createContext<Store | null>(null);
-
-export function StoreProvider({ children }: { children: ReactNode }) {
+export function LocalStoreProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AppState>(load);
+  const ref = useRef(state);
+  ref.current = state;
 
   useEffect(() => {
     try {
@@ -52,139 +97,36 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
   }, [state]);
 
-  const log = (s: AppState, text: string, kind: Activity['kind']): Activity[] =>
-    [{ id: uid(), at: new Date().toISOString(), text, kind }, ...s.activity].slice(0, 80);
+  const session = useMemo<Session>(
+    () => ({ mode: 'local', role: 'manager', uid: null, memberId: null, name: state.settings.managerName, email: '' }),
+    [state.settings.managerName]
+  );
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
 
-  /** Keep status, progress and completedAt consistent whichever one changed. */
-  const normalize = (prev: Task | undefined, next: Task): Task => {
-    const t = { ...next, progress: Math.max(0, Math.min(100, Math.round(next.progress))) };
-    if (prev && next.status !== prev.status) {
-      if (t.status === 'done') t.progress = 100;
-      else if (prev.status === 'done' && t.progress === 100) t.progress = 90;
-      else if (t.status === 'todo' && prev.status !== 'todo' && t.progress === prev.progress) t.progress = 0;
-    } else if (prev && next.progress !== prev.progress) {
-      t.status = t.progress >= 100 ? 'done' : t.progress > 0 ? 'in_progress' : prev.status === 'done' ? 'in_progress' : prev.status;
-    }
-    if (t.status === 'done') t.completedAt = t.completedAt ?? new Date().toISOString();
-    else delete t.completedAt;
-    return t;
-  };
-
-  const addTask = useCallback((input: TaskInput) => {
-    const task = normalize(undefined, { ...input, id: uid(), createdAt: new Date().toISOString(), notes: [] });
-    setState((s) => ({ ...s, tasks: [task, ...s.tasks], activity: log(s, `Assigned “${task.title}” to ${memberName(s, task.assigneeId)}`, 'task') }));
-    return task;
-  }, []);
-
-  const updateTask = useCallback((id: string, patch: Partial<Task>) => {
-    setState((s) => {
-      let activity = s.activity;
-      const tasks = s.tasks.map((t) => {
-        if (t.id !== id) return t;
-        const next = normalize(t, { ...t, ...patch });
-        if (next.status === 'done' && t.status !== 'done') activity = log(s, `${memberName(s, t.assigneeId)} completed “${t.title}”`, 'task');
-        else if (patch.assigneeId && patch.assigneeId !== t.assigneeId) activity = log(s, `Reassigned “${t.title}” to ${memberName(s, patch.assigneeId)}`, 'task');
-        return next;
-      });
-      return { ...s, tasks, activity };
-    });
-  }, []);
-
-  const deleteTask = useCallback((id: string) => {
-    setState((s) => {
-      const t = s.tasks.find((x) => x.id === id);
-      return { ...s, tasks: s.tasks.filter((x) => x.id !== id), activity: t ? log(s, `Deleted task “${t.title}”`, 'task') : s.activity };
-    });
-  }, []);
-
-  const addNote = useCallback((taskId: string, text: string, author: Note['author'] = 'manager') => {
-    setState((s) => {
-      const t = s.tasks.find((x) => x.id === taskId);
-      if (!t) return s;
-      const note: Note = { id: uid(), text, at: new Date().toISOString(), author };
-      return {
-        ...s,
-        tasks: s.tasks.map((x) => (x.id === taskId ? { ...x, notes: [...x.notes, note] } : x)),
-        activity: log(s, `${author === 'manager' ? 'You' : memberName(s, t.assigneeId)} added a note on “${t.title}”`, 'note'),
-      };
-    });
-  }, []);
-
-  const addMember = useCallback((m: Omit<Member, 'id' | 'joinedAt'>) => {
-    const member: Member = { ...m, id: uid(), joinedAt: new Date().toISOString() };
-    setState((s) => ({ ...s, members: [...s.members, member], activity: log(s, `${member.name} joined the team`, 'member') }));
-    return member;
-  }, []);
-
-  const updateMember = useCallback((id: string, patch: Partial<Member>) => {
-    setState((s) => ({ ...s, members: s.members.map((m) => (m.id === id ? { ...m, ...patch } : m)) }));
-  }, []);
-
-  const deleteMember = useCallback((id: string) => {
-    setState((s) => {
-      const m = s.members.find((x) => x.id === id);
-      return {
-        ...s,
-        members: s.members.filter((x) => x.id !== id),
-        tasks: s.tasks.filter((t) => t.assigneeId !== id),
-        reports: s.reports.filter((r) => r.memberId !== id),
-        activity: m ? log(s, `${m.name} was removed from the team`, 'member') : s.activity,
-      };
-    });
-  }, []);
-
-  /** One report per colleague per day: submitting again replaces the earlier one. Task updates are applied to tasks. */
-  const upsertReport = useCallback((input: ReportInput) => {
-    setState((s) => {
-      const existing = s.reports.find((r) => r.memberId === input.memberId && r.date === input.date);
-      const saved: DailyReport = {
-        managerNote: existing?.managerNote ?? '',
-        rating: existing?.rating ?? 0,
-        reviewed: false,
-        ...input,
-        id: existing?.id ?? uid(),
-        createdAt: new Date().toISOString(),
-      };
-      const reports = existing ? s.reports.map((r) => (r.id === existing.id ? saved : r)) : [saved, ...s.reports];
-      const tasks = s.tasks.map((t) => {
-        const u = input.taskUpdates.find((x) => x.taskId === t.id);
-        return u ? normalize(t, { ...t, progress: u.progress, status: u.status }) : t;
-      });
-      return { ...s, reports, tasks, activity: log(s, `${memberName(s, input.memberId)} submitted a daily report`, 'report') };
-    });
-  }, []);
-
-  const updateReport = useCallback((id: string, patch: Partial<DailyReport>) => {
-    setState((s) => ({ ...s, reports: s.reports.map((r) => (r.id === id ? { ...r, ...patch } : r)) }));
-  }, []);
-
-  const deleteReport = useCallback((id: string) => {
-    setState((s) => ({ ...s, reports: s.reports.filter((r) => r.id !== id) }));
-  }, []);
-
-  const updateSettings = useCallback((patch: Partial<Settings>) => {
-    setState((s) => ({ ...s, settings: { ...s.settings, ...patch } }));
-  }, []);
-
-  const replaceState = useCallback((next: AppState) => setState(next), []);
-  const resetDemo = useCallback(() => setState((s) => ({ ...createSeed(), settings: s.settings })), []);
-  const clearAll = useCallback(
-    () => setState((s) => ({ members: [], tasks: [], reports: [], activity: [], settings: s.settings })),
+  const ops = useMemo(
+    () =>
+      createOps(
+        () => ref.current,
+        () => sessionRef.current,
+        (changes) => {
+          ref.current = applyLocal(ref.current, changes);
+          setState(ref.current);
+        }
+      ),
     []
   );
 
+  const updateSettings = useCallback((patch: Partial<Settings>) => setState((s) => ({ ...s, settings: { ...s.settings, ...patch } })), []);
+  const replaceState = useCallback((next: AppState) => setState(next), []);
+  const resetDemo = useCallback(() => setState((s) => ({ ...createSeed(), settings: s.settings })), []);
+  const clearAll = useCallback(() => setState((s) => ({ members: [], tasks: [], reports: [], activity: [], settings: s.settings })), []);
+
   const value = useMemo<Store>(
-    () => ({ state, addTask, updateTask, deleteTask, addNote, addMember, updateMember, deleteMember, upsertReport, updateReport, deleteReport, updateSettings, replaceState, resetDemo, clearAll }),
-    [state, addTask, updateTask, deleteTask, addNote, addMember, updateMember, deleteMember, upsertReport, updateReport, deleteReport, updateSettings, replaceState, resetDemo, clearAll]
+    () => ({ ...ops, state, session, can: { manage: true }, updateSettings, replaceState, resetDemo, clearAll }),
+    [ops, state, session, updateSettings, replaceState, resetDemo, clearAll]
   );
-
-  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
-}
-
-export function useStore() {
-  const ctx = useContext(Ctx);
-  if (!ctx) throw new Error('useStore outside provider');
-  return ctx;
+  return <StoreCtx.Provider value={value}>{children}</StoreCtx.Provider>;
 }
 
 /* ---------- Hash router ---------- */

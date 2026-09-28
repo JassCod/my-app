@@ -1,48 +1,53 @@
 import { ClipboardList, FileText, Home, Plus, Send, Settings as SettingsIcon, UserPlus, Users, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { Backdrop, useThemeAttrs } from './components/Backdrop';
 import { SheetsProvider, useSheets } from './components/Sheets';
 import { navigate, useRoute, useStore, useToast } from './lib/store';
 import { Dashboard } from './pages/Dashboard';
 import { Import } from './pages/Import';
+import { MyDay } from './pages/MyDay';
+import { MyReports } from './pages/MyReports';
 import { Reports } from './pages/Reports';
 import { Settings } from './pages/Settings';
 import { Submit } from './pages/Submit';
 import { MemberDetail, Team } from './pages/Team';
 import { Tasks } from './pages/Tasks';
 
-const TABS = [
+type Tab = { path: string; label: string; icon: typeof Home };
+const MANAGER_TABS: Tab[] = [
   { path: '/', label: 'Home', icon: Home },
   { path: '/tasks', label: 'Tasks', icon: ClipboardList },
   { path: '/reports', label: 'Reports', icon: FileText },
   { path: '/team', label: 'Team', icon: Users },
+  { path: '/settings', label: 'More', icon: SettingsIcon },
+];
+const COLLEAGUE_TABS: Tab[] = [
+  { path: '/', label: 'Home', icon: Home },
+  { path: '/tasks', label: 'My tasks', icon: ClipboardList },
+  { path: '/reports', label: 'My reports', icon: FileText },
+  { path: '/settings', label: 'More', icon: SettingsIcon },
 ];
 
 export default function App() {
-  const { state } = useStore();
+  const { state, can, session } = useStore();
   const route = useRoute();
-  const { theme, effects } = state.settings;
-
-  useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-    document.documentElement.dataset.effects = effects ? 'on' : 'off';
-    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme === 'dark' ? '#0b0b1a' : '#f4f3ff');
-  }, [theme, effects]);
-
+  useThemeAttrs(state.settings);
   useEffect(() => window.scrollTo({ top: 0 }), [route.path]);
 
   const [first, second] = route.parts;
-  const solo = first === 'submit';
+  const local = session.mode === 'local';
+  const solo = first === 'submit' && local;
 
   let page;
-  if (first === 'submit') page = <Submit token={second ?? ''} />;
-  else if (first === 'import') page = <Import token={second ?? ''} />;
+  if (first === 'submit' && local) page = <Submit token={second ?? ''} />;
+  else if (first === 'import' && local) page = <Import token={second ?? ''} />;
   else if (first === 'tasks') page = <Tasks />;
-  else if (first === 'reports') page = <Reports />;
-  else if (first === 'team' && second) page = <MemberDetail id={second} />;
-  else if (first === 'team') page = <Team />;
+  else if (first === 'reports') page = can.manage ? <Reports /> : <MyReports />;
+  else if (first === 'team' && second && can.manage) page = <MemberDetail id={second} />;
+  else if (first === 'team' && can.manage) page = <Team />;
   else if (first === 'settings') page = <Settings />;
-  else page = <Dashboard />;
+  else page = can.manage ? <Dashboard /> : <MyDay />;
 
   return (
     <SheetsProvider>
@@ -58,28 +63,9 @@ export default function App() {
   );
 }
 
-/** Animated aurora blobs + grain + floating particles: the depth illusion behind the glass. */
-function Backdrop() {
-  return (
-    <div className="backdrop" aria-hidden>
-      <span className="blob b1" />
-      <span className="blob b2" />
-      <span className="blob b3" />
-      <span className="blob b4" />
-      <div className="particles">
-        {Array.from({ length: 14 }, (_, i) => (
-          <i key={i} style={{ left: `${(i * 37) % 100}%`, animationDelay: `${-i * 1.7}s`, animationDuration: `${14 + (i % 5) * 3}s` }} />
-        ))}
-      </div>
-      <div className="grid-floor" />
-      <div className="grain" />
-    </div>
-  );
-}
-
 function BottomNav({ active }: { active: string }) {
   const sheets = useSheets();
-  const { state } = useStore();
+  const { state, can } = useStore();
   const [fab, setFab] = useState(false);
   // Never leave the quick-action overlay covering a page after navigating away.
   useEffect(() => setFab(false), [active]);
@@ -87,9 +73,10 @@ function BottomNav({ active }: { active: string }) {
     setFab(false);
     fn();
   };
-  const left = TABS.slice(0, 2);
-  const right = TABS.slice(2);
-  const Tab = ({ t }: { t: (typeof TABS)[number] }) => {
+  const tabs = can.manage ? MANAGER_TABS : COLLEAGUE_TABS;
+  const left = tabs.slice(0, 2);
+  const right = tabs.slice(2);
+  const TabBtn = ({ t }: { t: Tab }) => {
     const on = active === t.path;
     return (
       <button className={`nav-tab ${on ? 'active' : ''}`} onClick={() => navigate(t.path)} aria-current={on ? 'page' : undefined}>
@@ -129,20 +116,21 @@ function BottomNav({ active }: { active: string }) {
           </button>
         </div>
       )}
-      <nav className="bottom-nav glass-strong" aria-label="Main">
+      <nav className={`bottom-nav glass-strong ${can.manage ? '' : 'four'}`} aria-label="Main">
         {left.map((t) => (
-          <Tab key={t.path} t={t} />
+          <TabBtn key={t.path} t={t} />
         ))}
-        <button className={`fab ${fab ? 'open' : ''}`} onClick={() => setFab((o) => !o)} aria-label={fab ? 'Close quick actions' : 'Quick actions'} aria-expanded={fab}>
+        <button
+          className={`fab ${fab ? 'open' : ''}`}
+          onClick={() => (can.manage ? setFab((o) => !o) : navigate('/reports?new=1'))}
+          aria-label={can.manage ? (fab ? 'Close quick actions' : 'Quick actions') : 'Write today’s report'}
+          aria-expanded={can.manage ? fab : undefined}
+        >
           {fab ? <X size={24} /> : <Plus size={26} />}
         </button>
         {right.map((t) => (
-          <Tab key={t.path} t={t} />
+          <TabBtn key={t.path} t={t} />
         ))}
-        <button className={`nav-tab ${active === '/settings' ? 'active' : ''}`} onClick={() => navigate('/settings')} aria-current={active === '/settings' ? 'page' : undefined}>
-          <SettingsIcon size={21} />
-          <span>More</span>
-        </button>
       </nav>
     </>
   );

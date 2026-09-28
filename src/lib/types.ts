@@ -4,11 +4,43 @@ export type TaskStatus = 'todo' | 'in_progress' | 'done';
 export interface Member {
   id: string;
   name: string;
-  role: string;
+  role: string; // job title
   email: string;
   phone: string;
   color: string;
   joinedAt: string;
+  uid?: string; // set when the colleague has signed in with their own account
+}
+
+/** Access level inside the app. Managers can do everything; colleagues work on their own tasks and reports. */
+export type Access = 'manager' | 'member';
+
+export interface UserDoc {
+  uid: string;
+  name: string;
+  email: string;
+  role: Access;
+  memberId: string | null;
+  inviteCode?: string;
+  createdAt: string;
+}
+
+export interface Invite {
+  code: string;
+  memberId: string;
+  email: string;
+  name: string;
+  teamName: string;
+  createdAt: string;
+}
+
+export interface Session {
+  mode: 'local' | 'cloud';
+  role: Access;
+  uid: string | null;
+  memberId: string | null;
+  name: string;
+  email: string;
 }
 
 export interface Note {
@@ -75,4 +107,5 @@ export interface AppState {
   reports: DailyReport[];
   activity: Activity[];
   settings: Settings;
+  users?: UserDoc[]; // cloud mode, managers only
 }

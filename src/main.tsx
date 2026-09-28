@@ -1,16 +1,29 @@
-import { StrictMode } from 'react';
+import { StrictMode, Suspense, lazy } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';
-import { StoreProvider, ToastProvider } from './lib/store';
+import { Splash } from './components/Backdrop';
+import { cloudEnabled } from './lib/cloudEnabled';
+import { LocalStoreProvider, ToastProvider } from './lib/store';
 import './styles.css';
+
+// Firebase is only downloaded when the shared (multi-user) mode is configured.
+const CloudRoot = lazy(() => import('./cloud/CloudRoot'));
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <StoreProvider>
-      <ToastProvider>
-        <App />
-      </ToastProvider>
-    </StoreProvider>
+    <ToastProvider>
+      {cloudEnabled ? (
+        <Suspense fallback={<Splash />}>
+          <CloudRoot>
+            <App />
+          </CloudRoot>
+        </Suspense>
+      ) : (
+        <LocalStoreProvider>
+          <App />
+        </LocalStoreProvider>
+      )}
+    </ToastProvider>
   </StrictMode>
 );
 

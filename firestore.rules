@@ -1,0 +1,111 @@
+rules_version = '2';
+
+// TeamPulse access rules.
+//   Manager   – full access to everything in the workspace.
+//   Colleague – reads the team directory, their own tasks and reports; can update progress/status
+//               and add notes on their own tasks, and submit their own daily reports.
+// Paste this file into Firebase console → Firestore Database → Rules → Publish.
+service cloud.firestore {
+  match /databases/{db}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function userPath(uid) { return /databases/$(db)/documents/users/$(uid); }
+    function hasProfile() { return signedIn() && exists(userPath(request.auth.uid)); }
+    function me() { return get(userPath(request.auth.uid)).data; }
+    function isManager() { return hasProfile() && me().role == 'manager'; }
+    function isColleague() { return hasProfile() && me().role == 'member'; }
+    function myMemberId() { return me().memberId; }
+    function changedOnly(keys) { return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys); }
+    function invite(code) { return get(/databases/$(db)/documents/invites/$(code)).data; }
+    function workspace() { return /databases/$(db)/documents/meta/workspace; }
+
+    // Team name + who founded it. Readable before sign-in so the app knows whether setup is needed.
+    match /meta/workspace {
+      allow get: if true;
+      allow create: if signedIn()
+        && !exists(workspace())
+        && request.resource.data.ownerUid == request.auth.uid
+        && getAfter(userPath(request.auth.uid)).data.role == 'manager';
+      allow update: if isManager() && changedOnly(['teamName']);
+    }
+
+    // One profile per account: its access level and which colleague record it belongs to.
+    match /users/{uid} {
+      allow get: if signedIn() && (request.auth.uid == uid || isManager());
+      allow list: if isManager();
+      allow create: if signedIn() && request.auth.uid == uid
+        && request.resource.data.email == request.auth.token.email
+        && (
+          // The very first account creates the workspace and becomes its manager.
+          (request.resource.data.role == 'manager'
+            && request.resource.data.memberId == null
+            && !exists(workspace())
+            && getAfter(workspace()).data.ownerUid == uid)
+          ||
+          // Everyone else needs a valid invite that was issued for their email address.
+          (request.resource.data.role == 'member'
+            && request.resource.data.inviteCode is string
+            && exists(/databases/$(db)/documents/invites/$(request.resource.data.inviteCode))
+            && invite(request.resource.data.inviteCode).memberId == request.resource.data.memberId
+            && invite(request.resource.data.inviteCode).email == request.auth.token.email)
+        );
+      allow update: if (request.auth.uid == uid && changedOnly(['name']))
+        || (isManager() && request.auth.uid != uid && changedOnly(['role'])
+            && request.resource.data.role in ['manager', 'member']);
+      allow delete: if isManager() && request.auth.uid != uid;
+    }
+
+    // Invite codes travel inside the invite link; knowing the code lets you read that one invite.
+    match /invites/{code} {
+      allow get: if true;
+      allow list, create, update, delete: if isManager();
+    }
+
+    match /members/{id} {
+      allow read: if isManager() || isColleague();
+      allow create, delete: if isManager();
+      allow update: if isManager()
+        // A colleague links their account to their own record while accepting the invite.
+        || (signedIn() && changedOnly(['uid'])
+            && request.resource.data.uid == request.auth.uid
+            && getAfter(userPath(request.auth.uid)).data.memberId == id);
+    }
+
+    match /tasks/{id} {
+      allow read: if isManager() || (isColleague() && resource.data.assigneeId == myMemberId());
+      allow create, delete: if isManager();
+      allow update: if isManager()
+        || (isColleague()
+            && resource.data.assigneeId == myMemberId()
+            && changedOnly(['status', 'progress', 'completedAt', 'notes'])
+            && request.resource.data.progress is number
+            && request.resource.data.progress >= 0 && request.resource.data.progress <= 100
+            && request.resource.data.status in ['todo', 'in_progress', 'done']
+            && request.resource.data.notes is list
+            && request.resource.data.notes.size() >= resource.data.notes.size());
+    }
+
+    match /reports/{id} {
+      allow read: if isManager() || (isColleague() && resource.data.memberId == myMemberId());
+      allow delete: if isManager();
+      allow create: if isManager()
+        || (isColleague()
+            && request.resource.data.memberId == myMemberId()
+            && id == myMemberId() + '_' + request.resource.data.date
+            && request.resource.data.managerNote == ''
+            && request.resource.data.rating == 0
+            && request.resource.data.reviewed == false);
+      allow update: if isManager()
+        || (isColleague()
+            && resource.data.memberId == myMemberId()
+            && request.resource.data.reviewed == false
+            && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['memberId', 'date', 'managerNote', 'rating']));
+    }
+
+    match /activity/{id} {
+      allow read, delete: if isManager();
+      allow create: if (isManager() || isColleague())
+        && request.resource.data.text is string && request.resource.data.text.size() < 400;
+    }
+  }
+}

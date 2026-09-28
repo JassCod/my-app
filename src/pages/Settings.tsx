@@ -1,4 +1,4 @@
-import { Database, Download, FileJson, Moon, RotateCcw, Share2, Smartphone, Sparkles, Sun, Trash2, Upload } from 'lucide-react';
+import { Database, Download, FileJson, LogOut, Moon, RotateCcw, Share2, ShieldCheck, Smartphone, Sparkles, Sun, Trash2, Upload } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { Avatar, Field, SectionTitle } from '../components/ui';
 import { backupJson, downloadBlob, reportsCsv, shareText, tasksCsv, tasksPdf } from '../lib/exporters';
@@ -12,7 +12,8 @@ interface InstallEvent extends Event {
 }
 
 export function Settings() {
-  const { state, updateSettings, replaceState, resetDemo, clearAll } = useStore();
+  const { state, session, can, updateSettings, replaceState, resetDemo, clearAll, signOut } = useStore();
+  const cloud = session.mode === 'cloud';
   const { toast } = useToast();
   const [install, setInstall] = useState<InstallEvent | null>(null);
   const [confirm, setConfirm] = useState<'reset' | 'clear' | null>(null);
@@ -32,7 +33,7 @@ export function Settings() {
     try {
       const data = JSON.parse(await file.text()) as AppState;
       if (!Array.isArray(data.members) || !Array.isArray(data.tasks) || !Array.isArray(data.reports)) throw new Error('bad');
-      replaceState({ ...data, activity: data.activity ?? [], settings: { ...state.settings, ...data.settings } });
+      replaceState?.({ ...data, activity: data.activity ?? [], settings: { ...state.settings, ...data.settings } });
       toast('Backup restored');
     } catch {
       toast('That file is not a TeamPulse backup', 'warn');
@@ -52,21 +53,31 @@ export function Settings() {
       </header>
 
       <div className="glass card-pad profile-mini">
-        <Avatar member={{ name: s.managerName, color: '#7c5cff' }} size={56} />
+        <Avatar member={{ name: session.name || s.managerName, color: '#7c5cff' }} size={56} />
         <div className="grow">
-          <strong>{s.managerName}</strong>
-          <p className="muted small">Manager · {s.teamName}</p>
+          <strong>{session.name || s.managerName}</strong>
+          <p className="muted small">
+            {can.manage ? 'Manager' : 'Colleague'} · {s.teamName}
+          </p>
+          {cloud && <p className="muted tiny">{session.email}</p>}
         </div>
+        {cloud && (
+          <span className={`badge ${can.manage ? 'tone-info' : 'tone-good'}`}>
+            <ShieldCheck size={12} /> {can.manage ? 'Full access' : 'My work'}
+          </span>
+        )}
       </div>
 
       <SectionTitle>Profile</SectionTitle>
       <div className="glass card-pad stack gap-12">
         <Field label="Your name">
-          <input value={s.managerName} onChange={(e) => updateSettings({ managerName: e.target.value })} />
+          <DeferredInput value={cloud ? session.name : s.managerName} onCommit={(v) => v.trim() && updateSettings({ managerName: v.trim() })} />
         </Field>
-        <Field label="Team name">
-          <input value={s.teamName} onChange={(e) => updateSettings({ teamName: e.target.value })} />
-        </Field>
+        {can.manage && (
+          <Field label="Team name">
+            <DeferredInput value={s.teamName} onCommit={(v) => v.trim() && updateSettings({ teamName: v.trim() })} />
+          </Field>
+        )}
       </div>
 
       <SectionTitle>Appearance</SectionTitle>
@@ -94,7 +105,7 @@ export function Settings() {
           <span className="lr-icon">
             <Download size={17} />
           </span>
-          <span className="grow">Task register (PDF)</span>
+          <span className="grow">Tasks (PDF)</span>
         </button>
         <button className="list-row" onClick={() => downloadBlob(tasksCsv(state), `tasks-${stamp}.csv`)}>
           <span className="lr-icon">
@@ -106,7 +117,7 @@ export function Settings() {
           <span className="lr-icon">
             <Download size={17} />
           </span>
-          <span className="grow">All daily reports (CSV / Excel)</span>
+          <span className="grow">Daily reports (CSV / Excel)</span>
         </button>
         <button
           className="list-row"
@@ -141,63 +152,95 @@ export function Settings() {
         )}
       </div>
 
-      <SectionTitle>Data</SectionTitle>
-      <div className="glass list">
-        <button
-          className="list-row"
-          onClick={() => {
-            downloadBlob(backupJson(state), `teampulse-backup-${stamp}.json`);
-            toast('Backup downloaded');
-          }}
-        >
-          <span className="lr-icon">
-            <FileJson size={17} />
-          </span>
-          <span className="grow">
-            Back up all data
-            <small className="muted block">
-              {state.members.length} colleagues · {state.tasks.length} tasks · {state.reports.length} reports
-            </small>
-          </span>
-        </button>
-        <button className="list-row" onClick={() => fileRef.current?.click()}>
-          <span className="lr-icon">
-            <Upload size={17} />
-          </span>
-          <span className="grow">Restore from backup</span>
-        </button>
-        <input
-          ref={fileRef}
-          type="file"
-          accept="application/json,.json"
-          hidden
-          onChange={(e) => {
-            const f = e.target.files?.[0];
-            if (f) restore(f);
-            e.target.value = '';
-          }}
-        />
-        <button className="list-row" onClick={() => (confirm === 'reset' ? (resetDemo(), setConfirm(null), toast('Demo data loaded')) : setConfirm('reset'))}>
-          <span className="lr-icon">
-            <RotateCcw size={17} />
-          </span>
-          <span className="grow">{confirm === 'reset' ? 'Tap again to replace everything with demo data' : 'Load demo data'}</span>
-        </button>
-        <button className="list-row danger-text" onClick={() => (confirm === 'clear' ? (clearAll(), setConfirm(null), toast('Workspace cleared', 'info')) : setConfirm('clear'))}>
-          <span className="lr-icon">
-            <Trash2 size={17} />
-          </span>
-          <span className="grow">{confirm === 'clear' ? 'Tap again to erase all data' : 'Start fresh (erase all)'}</span>
-        </button>
-      </div>
+      {can.manage && (
+        <>
+          <SectionTitle>Data</SectionTitle>
+          <div className="glass list">
+            <button
+              className="list-row"
+              onClick={() => {
+                downloadBlob(backupJson(state), `teampulse-backup-${stamp}.json`);
+                toast('Backup downloaded');
+              }}
+            >
+              <span className="lr-icon">
+                <FileJson size={17} />
+              </span>
+              <span className="grow">
+                Download a backup
+                <small className="muted block">
+                  {state.members.length} colleagues · {state.tasks.length} tasks · {state.reports.length} reports
+                </small>
+              </span>
+            </button>
+            {!cloud && (
+              <>
+                <button className="list-row" onClick={() => fileRef.current?.click()}>
+                  <span className="lr-icon">
+                    <Upload size={17} />
+                  </span>
+                  <span className="grow">Restore from backup</span>
+                </button>
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept="application/json,.json"
+                  hidden
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) restore(f);
+                    e.target.value = '';
+                  }}
+                />
+                <button className="list-row" onClick={() => (confirm === 'reset' ? (resetDemo?.(), setConfirm(null), toast('Demo data loaded')) : setConfirm('reset'))}>
+                  <span className="lr-icon">
+                    <RotateCcw size={17} />
+                  </span>
+                  <span className="grow">{confirm === 'reset' ? 'Tap again to replace everything with demo data' : 'Load demo data'}</span>
+                </button>
+                <button className="list-row danger-text" onClick={() => (confirm === 'clear' ? (clearAll?.(), setConfirm(null), toast('Workspace cleared', 'info')) : setConfirm('clear'))}>
+                  <span className="lr-icon">
+                    <Trash2 size={17} />
+                  </span>
+                  <span className="grow">{confirm === 'clear' ? 'Tap again to erase all data' : 'Start fresh (erase all)'}</span>
+                </button>
+              </>
+            )}
+          </div>
+        </>
+      )}
+
+      {cloud && signOut && (
+        <>
+          <SectionTitle>Account</SectionTitle>
+          <div className="glass list">
+            <button className="list-row danger-text" onClick={() => signOut()}>
+              <span className="lr-icon">
+                <LogOut size={17} />
+              </span>
+              <span className="grow">
+                Sign out
+                <small className="muted block">Removes the team’s data from this device</small>
+              </span>
+            </button>
+          </div>
+        </>
+      )}
 
       <p className="muted tiny center about">
-        <Database size={12} /> Data is stored privately on this device. Use backup to move it to another phone.
+        <Database size={12} /> {cloud ? 'Synced securely for your team. Works offline and catches up when you reconnect.' : 'Demo mode: data is stored only on this device.'}
         <br />
         TeamPulse v1.0
       </p>
     </div>
   );
+}
+
+/** Text input that saves when you leave the field, not on every keystroke. */
+function DeferredInput({ value, onCommit }: { value: string; onCommit: (v: string) => void }) {
+  const [v, setV] = useState(value);
+  useEffect(() => setV(value), [value]);
+  return <input value={v} onChange={(e) => setV(e.target.value)} onBlur={() => v !== value && onCommit(v)} onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()} />;
 }
 
 function Toggle({ on, onChange, label }: { on: boolean; onChange: (v: boolean) => void; label: string }) {

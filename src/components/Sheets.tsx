@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Check, Copy, Link2, Pencil, Send, Share2, Trash2 } from 'lucide-react';
 import { useStore, useToast } from '../lib/store';
 import { shareText } from '../lib/exporters';
@@ -69,7 +69,7 @@ export function SheetsProvider({ children }: { children: ReactNode }) {
 /* ---------------- Task detail: status, progress, manager add-ons ---------------- */
 
 function TaskDetail({ id, onClose, api }: { id: string; onClose: () => void; api: SheetApi }) {
-  const { state, updateTask, deleteTask, addNote } = useStore();
+  const { state, updateTask, deleteTask, addNote, can, session } = useStore();
   const { toast } = useToast();
   const task = state.tasks.find((t) => t.id === id);
   const [note, setNote] = useState('');
@@ -78,8 +78,8 @@ function TaskDetail({ id, onClose, api }: { id: string; onClose: () => void; api
   const member = state.members.find((m) => m.id === task.assigneeId);
 
   const share = async () => {
-    const text = `📌 Task for ${member?.name ?? 'you'}: ${task.title}\n${task.description ? task.description + '\n' : ''}Priority: ${task.priority} · ${dueLabel(task.dueDate)} · Progress ${task.progress}%\n\nSend your daily report here:`;
-    const res = await shareText(task.title, text, reportLink(state, task.assigneeId));
+    const text = `📌 Task for ${member?.name ?? 'you'}: ${task.title}\n${task.description ? task.description + '\n' : ''}Priority: ${task.priority} · ${dueLabel(task.dueDate)} · Progress ${task.progress}%\n\n${session.mode === 'local' ? 'Send your daily report here:' : 'Open TeamPulse:'}`;
+    const res = await shareText(task.title, text, session.mode === 'local' ? reportLink(state, task.assigneeId) : appUrl('/'));
     if (res === 'copied') toast('Task details copied to clipboard');
     if (res === 'failed') toast('Could not share on this device', 'warn');
   };
@@ -90,6 +90,7 @@ function TaskDetail({ id, onClose, api }: { id: string; onClose: () => void; api
       onClose={onClose}
       title="Task details"
       footer={
+        !can.manage ? undefined : (
         <>
           <button className="btn ghost" onClick={share}>
             <Share2 size={16} /> Share
@@ -114,6 +115,7 @@ function TaskDetail({ id, onClose, api }: { id: string; onClose: () => void; api
             </button>
           )}
         </>
+        )
       }
     >
       <div className="td-head">
@@ -149,18 +151,18 @@ function TaskDetail({ id, onClose, api }: { id: string; onClose: () => void; api
         />
       </Field>
 
-      <Field label={`Progress · ${task.progress}%`}>
-        <input className="range" type="range" min={0} max={100} step={5} value={task.progress} onChange={(e) => updateTask(task.id, { progress: Number(e.target.value) })} style={{ ['--val' as string]: `${task.progress}%` }} />
-      </Field>
+      <ProgressField value={task.progress} onCommit={(progress) => updateTask(task.id, { progress })} />
 
       <div className="field">
         <span className="field-label">Notes & add-ons ({task.notes.length})</span>
         <div className="notes">
-          {task.notes.length === 0 && <p className="muted small">No notes yet. Add instructions, feedback or extra work for this task.</p>}
+          {task.notes.length === 0 && (
+            <p className="muted small">{can.manage ? 'No notes yet. Add instructions, feedback or extra work for this task.' : 'No notes yet. Ask a question or share an update with your manager.'}</p>
+          )}
           {task.notes.map((n) => (
             <div key={n.id} className={`note ${n.author}`}>
               <div className="note-meta">
-                {n.author === 'manager' ? state.settings.managerName : member?.name ?? 'Colleague'} · {relTime(n.at)}
+                {n.author === 'manager' ? (can.manage ? 'You' : 'Manager') : can.manage ? member?.name ?? 'Colleague' : 'You'} · {relTime(n.at)}
               </div>
               {n.text}
             </div>
@@ -176,13 +178,38 @@ function TaskDetail({ id, onClose, api }: { id: string; onClose: () => void; api
             toast('Note added');
           }}
         >
-          <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Add a note or extra instruction…" />
+          <input value={note} onChange={(e) => setNote(e.target.value)} placeholder={can.manage ? 'Add a note or extra instruction…' : 'Add a note for your manager…'} />
           <button className="btn primary icon" aria-label="Add note" disabled={!note.trim()}>
             <Send size={16} />
           </button>
         </form>
       </div>
     </Sheet>
+  );
+}
+
+/** Slider that moves instantly and saves once the finger stops, instead of on every step. */
+function ProgressField({ value, onCommit }: { value: number; onCommit: (v: number) => void }) {
+  const [local, setLocal] = useState(value);
+  const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const pending = useRef(false);
+  useEffect(() => {
+    if (!pending.current) setLocal(value);
+  }, [value]);
+  useEffect(() => () => clearTimeout(timer.current), []);
+  const change = (v: number) => {
+    setLocal(v);
+    pending.current = true;
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => {
+      pending.current = false;
+      if (v !== value) onCommit(v);
+    }, 400);
+  };
+  return (
+    <Field label={`Progress · ${local}%`}>
+      <input className="range" type="range" min={0} max={100} step={5} value={local} onChange={(e) => change(Number(e.target.value))} style={{ ['--val' as string]: `${local}%` }} />
+    </Field>
   );
 }
 
@@ -517,7 +544,7 @@ function ReportForm({ memberId, date, onClose }: { memberId?: string; date?: str
 /* ---------------- Member create / edit ---------------- */
 
 function MemberForm({ id, onClose }: { id?: string; onClose: () => void }) {
-  const { state, addMember, updateMember } = useStore();
+  const { state, addMember, updateMember, session } = useStore();
   const { toast } = useToast();
   const existing = id ? state.members.find((m) => m.id === id) : undefined;
   const [form, setForm] = useState<Omit<Member, 'id' | 'joinedAt'>>({
@@ -560,7 +587,7 @@ function MemberForm({ id, onClose }: { id?: string; onClose: () => void }) {
         <input value={form.role} onChange={(e) => set('role', e.target.value)} placeholder="e.g. Sales Executive" />
       </Field>
       <div className="row gap-12">
-        <Field label="Email">
+        <Field label="Email" hint={session.mode === 'cloud' ? 'Needed to invite them to the app' : undefined}>
           <input type="email" value={form.email} onChange={(e) => set('email', e.target.value)} placeholder="name@company.com" />
         </Field>
         <Field label="Phone">
@@ -604,13 +631,43 @@ export function reportLink(state: ReturnType<typeof useStore>['state'], memberId
 }
 
 function RequestReport({ memberId, onClose }: { memberId: string; onClose: () => void }) {
-  const { state } = useStore();
+  const { state, session, inviteLink } = useStore();
   const { toast } = useToast();
   const member = state.members.find((m) => m.id === memberId);
-  const link = reportLink(state, memberId);
-  const message = `Hi ${member?.name.split(' ')[0] ?? ''}, please submit your daily report for ${fmtDate(todayKey(), { weekday: 'long', day: 'numeric', month: 'short' })} using this link. It also shows your open tasks so you can update progress.`;
+  const day = fmtDate(todayKey(), { weekday: 'long', day: 'numeric', month: 'short' });
+  const cloud = session.mode === 'cloud';
+  const joined = !!member?.uid;
+  // Demo mode: a self-contained report link. Shared mode: joined colleagues just open the app; others get their invite.
+  const [link, setLink] = useState(() => (!cloud ? reportLink(state, memberId) : joined ? appUrl('/reports?new=1') : ''));
+  const [inviteError, setInviteError] = useState('');
+  useEffect(() => {
+    if (!cloud || joined || !inviteLink) return;
+    if (!member?.email) {
+      setInviteError('Add their email address first (Edit colleague) so they can be invited.');
+      return;
+    }
+    inviteLink(memberId).then(setLink, () => setInviteError('Could not create the invite. Check your connection.'));
+  }, [cloud, joined, inviteLink, memberId, member?.email]);
+  const first = member?.name.split(' ')[0] ?? '';
+  const message = !cloud
+    ? `Hi ${first}, please submit your daily report for ${day} using this link. It also shows your open tasks so you can update progress.`
+    : joined
+      ? `Hi ${first}, reminder to send your daily report for ${day} in TeamPulse.`
+      : `Hi ${first}, you're invited to ${state.settings.teamName} on TeamPulse. Open this link to create your login — you'll see your tasks there and send your daily reports.`;
+  if (inviteError)
+    return (
+      <Sheet open onClose={onClose} title="Invite to TeamPulse">
+        <p className="hint-box">{inviteError}</p>
+      </Sheet>
+    );
+  if (!link)
+    return (
+      <Sheet open onClose={onClose} title="Invite to TeamPulse">
+        <p className="muted">Creating invite link…</p>
+      </Sheet>
+    );
   return (
-    <Sheet open onClose={onClose} title="Request daily report">
+    <Sheet open onClose={onClose} title={cloud && !joined ? 'Invite to TeamPulse' : 'Request daily report'}>
       <div className="rd-head">
         <Avatar member={member} size={48} />
         <div>
@@ -619,7 +676,17 @@ function RequestReport({ memberId, onClose }: { memberId: string; onClose: () =>
         </div>
       </div>
       <p className="muted">
-        Send this personal link to your colleague. They fill in the report on their phone, then tap <b>Send to manager</b> — you open the link they send back and the report is added here automatically.
+        {!cloud ? (
+          <>
+            Send this personal link to your colleague. They fill in the report on their phone, then tap <b>Send to manager</b> — you open the link they send back and the report is added here automatically.
+          </>
+        ) : joined ? (
+          <>{first} has their own login. Send a reminder — their report appears here as soon as they send it.</>
+        ) : (
+          <>
+            {first} hasn’t joined yet. Send this personal invite link — it only works for <b>{member?.email}</b>. After signing up they see only their own tasks and reports.
+          </>
+        )}
       </p>
       <div className="link-box">
         <Link2 size={16} />
@@ -629,7 +696,7 @@ function RequestReport({ memberId, onClose }: { memberId: string; onClose: () =>
         <button
           className="btn primary block"
           onClick={async () => {
-            const res = await shareText('Daily report request', message, link);
+            const res = await shareText(cloud && !joined ? 'TeamPulse invite' : 'Daily report request', message, link);
             if (res === 'copied') toast('Request copied — paste it in WhatsApp, Slack or email');
             if (res === 'failed') toast('Could not share on this device', 'warn');
           }}
@@ -637,7 +704,7 @@ function RequestReport({ memberId, onClose }: { memberId: string; onClose: () =>
           <Share2 size={16} /> Share request
         </button>
         {member?.email && (
-          <a className="btn ghost block" href={`mailto:${member.email}?subject=${encodeURIComponent('Daily report request')}&body=${encodeURIComponent(message + '\n\n' + link)}`}>
+          <a className="btn ghost block" href={`mailto:${member.email}?subject=${encodeURIComponent(cloud && !joined ? `Join ${state.settings.teamName} on TeamPulse` : 'Daily report request')}&body=${encodeURIComponent(message + '\n\n' + link)}`}>
             <Send size={16} /> Send by email
           </a>
         )}
