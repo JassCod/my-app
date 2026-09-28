@@ -1,0 +1,27 @@
+{
+  "name": "teampulse",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "TeamPulse — a mobile app for managers to assign tasks, collect daily reports from colleagues and track incomplete work.",
+  "scripts": {
+    "dev": "vite --host",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview --host",
+    "typecheck": "tsc -b"
+  },
+  "dependencies": {
+    "jspdf": "^4.2.1",
+    "jspdf-autotable": "^5.0.8",
+    "lucide-react": "^1.48.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "typescript": "~5.9.0",
+    "vite": "^8.3.1"
+  }
+}
