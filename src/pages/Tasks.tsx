@@ -13,7 +13,7 @@ type Sort = 'due' | 'priority' | 'recent' | 'progress';
 const PRIO = { high: 0, medium: 1, low: 2 };
 
 export function Tasks() {
-  const { state } = useStore();
+  const { state, can } = useStore();
   const sheets = useSheets();
   const { toast } = useToast();
   const route = useRoute();
@@ -60,8 +60,8 @@ export function Tasks() {
     <div className="page">
       <header className="page-head">
         <div>
-          <p className="eyebrow">Work board</p>
-          <h1>Tasks</h1>
+          <p className="eyebrow">{can.manage ? 'Work board' : 'Assigned to me'}</p>
+          <h1>{can.manage ? 'Tasks' : 'My tasks'}</h1>
         </div>
         <div className="row gap-8">
           <div className="menu-wrap">
@@ -75,9 +75,11 @@ export function Tasks() {
               </div>
             )}
           </div>
-          <button className="icon-btn primary" onClick={() => sheets.newTask(who || undefined)} aria-label="Assign task">
-            <Plus size={20} />
-          </button>
+          {can.manage && (
+            <button className="icon-btn primary" onClick={() => sheets.newTask(who || undefined)} aria-label="Assign task">
+              <Plus size={20} />
+            </button>
+          )}
         </div>
       </header>
 
@@ -104,6 +106,7 @@ export function Tasks() {
       />
 
       <div className="filter-row">
+        {can.manage ? (
         <div className="who-filter">
           <button className={`who ${!who ? 'active' : ''}`} onClick={() => setWho('')}>
             All
@@ -114,6 +117,9 @@ export function Tasks() {
             </button>
           ))}
         </div>
+        ) : (
+          <span className="grow muted small">Tap a task to update progress or add a note</span>
+        )}
         <select className="sort" value={sort} onChange={(e) => setSort(e.target.value as Sort)} aria-label="Sort tasks">
           <option value="due">Due date</option>
           <option value="priority">Priority</option>
@@ -125,18 +131,20 @@ export function Tasks() {
       {list.length ? (
         <div className="stack gap-12 stagger">
           {list.map((t) => (
-            <TaskCard key={t.id} task={t} onOpen={(x) => sheets.openTask(x.id)} />
+            <TaskCard key={t.id} task={t} onOpen={(x) => sheets.openTask(x.id)} showAssignee={can.manage} />
           ))}
         </div>
       ) : (
         <Empty
           icon={ClipboardList}
           title="No tasks here"
-          text={q || who || filter !== 'all' ? 'Try another filter or search.' : 'Assign the first task to your team.'}
+          text={q || who || filter !== 'all' ? 'Try another filter or search.' : can.manage ? 'Assign the first task to your team.' : 'Your manager hasn’t assigned you anything yet.'}
           action={
-            <button className="btn primary" onClick={() => sheets.newTask(who || undefined)}>
-              <Plus size={16} /> Assign task
-            </button>
+            can.manage ? (
+              <button className="btn primary" onClick={() => sheets.newTask(who || undefined)}>
+                <Plus size={16} /> Assign task
+              </button>
+            ) : undefined
           }
         />
       )}

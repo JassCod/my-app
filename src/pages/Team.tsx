@@ -1,4 +1,4 @@
-import { ArrowLeft, FileDown, Mail, Pencil, Phone, Plus, Send, Trash2, UserPlus, Users } from 'lucide-react';
+import { ArrowLeft, FileDown, Mail, Pencil, Phone, Plus, Send, ShieldCheck, Trash2, UserPlus, Users } from 'lucide-react';
 import { useState } from 'react';
 import { useSheets } from '../components/Sheets';
 import { TaskCard } from '../components/TaskCard';
@@ -8,7 +8,7 @@ import { navigate, useStore, useToast } from '../lib/store';
 import { fmtDate, isOverdue, summarizeDay, todayKey } from '../lib/utils';
 
 export function Team() {
-  const { state } = useStore();
+  const { state, session } = useStore();
   const sheets = useSheets();
   const today = summarizeDay(state, todayKey());
   return (
@@ -38,7 +38,10 @@ export function Team() {
                   <Avatar member={m} size={52} />
                   <div className="grow">
                     <h4>{m.name}</h4>
-                    <p className="muted small">{m.role}</p>
+                    <p className="muted small">
+                      {m.role}
+                      {session.mode === 'cloud' && !m.uid && <span className="not-joined"> · not joined yet</span>}
+                    </p>
                   </div>
                   <span className={`badge ${reported ? 'tone-good' : 'tone-warning'}`}>{reported ? 'Reported' : 'Pending'}</span>
                 </div>
@@ -77,12 +80,14 @@ export function Team() {
 }
 
 export function MemberDetail({ id }: { id: string }) {
-  const { state, deleteMember } = useStore();
+  const { state, deleteMember, session, setAccess } = useStore();
   const sheets = useSheets();
   const { toast } = useToast();
   const [tab, setTab] = useState<'open' | 'done' | 'reports'>('open');
   const [confirm, setConfirm] = useState(false);
   const m = state.members.find((x) => x.id === id);
+  const cloud = session.mode === 'cloud';
+  const account = m?.uid ? state.users?.find((u) => u.uid === m.uid) : undefined;
   if (!m)
     return (
       <div className="page">
@@ -166,9 +171,49 @@ export function MemberDetail({ id }: { id: string }) {
           <Plus size={16} /> Assign task
         </button>
         <button className="btn ghost grow" onClick={() => sheets.requestReport(m.id)}>
-          <Send size={16} /> Request report
+          <Send size={16} /> {cloud && !m.uid ? 'Invite to app' : 'Request report'}
         </button>
       </div>
+
+      {cloud && (
+        <div className="glass card-pad stack gap-12 access-card">
+          <div className="row gap-8">
+            <ShieldCheck size={18} className="accent-icon" />
+            <strong className="grow">App access</strong>
+            <span className={`badge ${m.uid ? 'tone-good' : 'tone-warning'}`}>{m.uid ? 'Joined' : 'Not joined'}</span>
+          </div>
+          {m.uid && account ? (
+            <>
+              <p className="muted small">
+                Signs in as <b>{account.email}</b>.
+              </p>
+              <Segmented
+                value={account.role}
+                onChange={(role) => {
+                  if (role === account.role || !setAccess) return;
+                  setAccess(account.uid, role);
+                  toast(role === 'manager' ? `${m.name.split(' ')[0]} now has full manager access` : `${m.name.split(' ')[0]} now sees only their own work`);
+                }}
+                options={[
+                  { value: 'member', label: 'Colleague' },
+                  { value: 'manager', label: 'Manager' },
+                ]}
+              />
+              <p className="muted tiny">
+                {account.role === 'manager' ? 'Full access: sees and manages the whole team.' : 'Sees only their own tasks and reports; updates progress, adds notes, sends reports.'}
+              </p>
+            </>
+          ) : (
+            <p className="muted small">
+              {m.email ? (
+                <>Send an invite to <b>{m.email}</b>. Once they join they can update their tasks and send daily reports from their own phone.</>
+              ) : (
+                <>Add an email address (Edit) to invite {m.name.split(' ')[0]} to the app.</>
+              )}
+            </p>
+          )}
+        </div>
+      )}
 
       <Segmented
         value={tab}
@@ -218,7 +263,7 @@ export function MemberDetail({ id }: { id: string }) {
       {confirm ? (
         <div className="glass card-pad stack gap-8">
           <p className="small">
-            Remove <b>{m.name}</b> along with their {tasks.length} tasks and {reports.length} reports? This can’t be undone.
+            Remove <b>{m.name}</b> along with their {tasks.length} tasks and {reports.length} reports?{cloud && m.uid ? ' They will lose access to the app.' : ''} This can’t be undone.
           </p>
           <div className="row gap-8">
             <button className="btn ghost grow" onClick={() => setConfirm(false)}>
