@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Check, Copy, Link2, Pencil, Send, Share2, Trash2 } from 'lucide-react';
 import { useStore, useToast } from '../lib/store';
+import { ErrorBoundary } from './ErrorBoundary';
 import { shareText } from '../lib/exporters';
 import type { DailyReport, Member, Priority, Task, TaskStatus, TaskUpdate } from '../lib/types';
 import { MEMBER_COLORS, MOODS, STATUS_LABEL, addDays, appUrl, dueLabel, encodePayload, fmtDate, fmtLongDate, isOverdue, memberName, relTime, todayKey } from '../lib/utils';
@@ -36,6 +37,11 @@ export const useSheets = () => {
 export function SheetsProvider({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState<Open>(null);
   const close = useCallback(() => setOpen(null), []);
+  const { toast } = useToast();
+  const sheetCrashed = useCallback(() => {
+    setOpen(null);
+    toast('That window ran into a problem and was closed', 'warn');
+  }, [toast]);
   useEffect(() => {
     window.addEventListener('hashchange', close);
     return () => window.removeEventListener('hashchange', close);
@@ -56,12 +62,15 @@ export function SheetsProvider({ children }: { children: ReactNode }) {
   return (
     <Ctx.Provider value={api}>
       {children}
-      {open?.kind === 'task' && <TaskDetail id={open.id} onClose={close} api={api} />}
-      {open?.kind === 'taskForm' && <TaskForm id={open.id} assigneeId={open.assigneeId} onClose={close} api={api} />}
-      {open?.kind === 'report' && <ReportDetail id={open.id} onClose={close} api={api} />}
-      {open?.kind === 'reportForm' && <ReportForm memberId={open.memberId} date={open.date} onClose={close} />}
-      {open?.kind === 'memberForm' && <MemberForm id={open.id} onClose={close} />}
-      {open?.kind === 'request' && <RequestReport memberId={open.memberId} onClose={close} />}
+      {/* A crash inside a pop-up closes just that pop-up instead of taking down the app. */}
+      <ErrorBoundary resetKey={open ? JSON.stringify(open) : ''} onError={sheetCrashed}>
+        {open?.kind === 'task' && <TaskDetail id={open.id} onClose={close} api={api} />}
+        {open?.kind === 'taskForm' && <TaskForm id={open.id} assigneeId={open.assigneeId} onClose={close} api={api} />}
+        {open?.kind === 'report' && <ReportDetail id={open.id} onClose={close} api={api} />}
+        {open?.kind === 'reportForm' && <ReportForm memberId={open.memberId} date={open.date} onClose={close} />}
+        {open?.kind === 'memberForm' && <MemberForm id={open.id} onClose={close} />}
+        {open?.kind === 'request' && <RequestReport memberId={open.memberId} onClose={close} />}
+      </ErrorBoundary>
     </Ctx.Provider>
   );
 }
