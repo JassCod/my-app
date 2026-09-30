@@ -239,7 +239,9 @@ export function Settings() {
 /** Text input that saves when you leave the field, not on every keystroke. */
 function DeferredInput({ value, onCommit }: { value: string; onCommit: (v: string) => void }) {
   const [v, setV] = useState(value);
-  useEffect(() => setV(value), [value]);
+  useEffect(() => {
+    setV(value);
+  }, [value]);
   return <input value={v} onChange={(e) => setV(e.target.value)} onBlur={() => v !== value && onCommit(v)} onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()} />;
 }
 

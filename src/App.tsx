@@ -33,7 +33,10 @@ export default function App() {
   const { state, can, session } = useStore();
   const route = useRoute();
   useThemeAttrs(state.settings);
-  useEffect(() => window.scrollTo({ top: 0 }), [route.path]);
+  // Braces matter: newer browsers return a Promise from scrollTo, and React would try to call it as a cleanup.
+  useEffect(() => {
+    window.scrollTo({ top: 0 });
+  }, [route.path]);
 
   const [first, second] = route.parts;
   const local = session.mode === 'local';
@@ -80,7 +83,9 @@ const BottomNav = memo(function BottomNav({ active, canManage, firstMemberId }: 
   const can = { manage: canManage };
   const [fab, setFab] = useState(false);
   // Never leave the quick-action overlay covering a page after navigating away.
-  useEffect(() => setFab(false), [active]);
+  useEffect(() => {
+    setFab(false);
+  }, [active]);
   const act = (fn: () => void) => () => {
     setFab(false);
     fn();

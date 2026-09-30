@@ -11,7 +11,8 @@
     "typecheck": "tsc -b",
     "test:rules": "firebase emulators:exec --only firestore --project demo-teampulse \"node --test tests/rules.test.mjs\"",
     "emulators": "firebase emulators:start --only auth,firestore --project demo-teampulse",
-    "dev:cloud": "VITE_FIREBASE_EMULATOR=1 vite --host"
+    "dev:cloud": "VITE_FIREBASE_EMULATOR=1 vite --host",
+    "test": "node --test tests/effects.test.mjs"
   },
   "dependencies": {
     "firebase": "^12.19.0",
