@@ -93,7 +93,7 @@ export function Settings() {
           </span>
           <span className="grow">
             Motion & 3D effects
-            <small className="muted block">Floating lights, tilt and glow</small>
+            <small className="muted block">Floating lights, tilt and glow. Turn off if the app feels slow.</small>
           </span>
           <Toggle on={s.effects} onChange={(effects) => updateSettings({ effects })} label="Motion effects" />
         </div>
