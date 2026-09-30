@@ -9,7 +9,7 @@ import { addDays, dueLabel, fmtDate, fmtLongDate, memberName, summarizeDay, toda
 type Tab = 'reports' | 'incomplete' | 'completed';
 
 export function Reports() {
-  const { state } = useStore();
+  const { state, session } = useStore();
   const sheets = useSheets();
   const { toast } = useToast();
   const route = useRoute();
@@ -169,7 +169,7 @@ export function Reports() {
                   <div className="grow left">
                     <strong>{m?.name ?? 'Former colleague'}</strong>
                     <small className="muted block">
-                      {r.hours}h · {r.source === 'colleague' ? 'via link' : 'recorded by you'}
+                      {r.hours}h · {r.source === 'colleague' ? (session.mode === 'cloud' ? 'sent by them' : 'via link') : 'recorded by you'}
                     </small>
                   </div>
                   <MoodDot mood={r.mood} />

@@ -2,7 +2,7 @@
 // Pages: serve the cached shell instantly and refresh it in the background, so a slow or
 // flaky connection can never leave the app stuck on a blank screen. Assets are content-hashed,
 // so they are cache-first.
-const CACHE = 'teampulse-v2';
+const CACHE = 'teampulse-v3';
 const SHELL = './index.html';
 
 self.addEventListener('install', (event) => {

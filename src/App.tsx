@@ -1,5 +1,5 @@
 import { ClipboardList, FileText, Home, Plus, Send, Settings as SettingsIcon, UserPlus, Users, X } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { memo, useEffect, useState } from 'react';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { Backdrop, useThemeAttrs } from './components/Backdrop';
 import { SheetsProvider, useSheets } from './components/Sheets';
@@ -56,16 +56,28 @@ export default function App() {
         <main key={route.path} className="view">
           <ErrorBoundary resetKey={route.path}>{page}</ErrorBoundary>
         </main>
-        {!solo && <BottomNav active={'/' + (first ?? '')} />}
+        {!solo && <BottomNav active={'/' + (first ?? '')} canManage={can.manage} firstMemberId={state.members[0]?.id} />}
         <Toasts />
       </div>
     </SheetsProvider>
   );
 }
 
-function BottomNav({ active }: { active: string }) {
+/** A tab keeps the same button element across renders, so a tap in progress is never lost. */
+function TabBtn({ t, active }: { t: Tab; active: string }) {
+  const on = active === t.path;
+  return (
+    <button className={`nav-tab ${on ? 'active' : ''}`} onClick={() => navigate(t.path)} aria-current={on ? 'page' : undefined}>
+      <t.icon size={21} />
+      <span>{t.label}</span>
+    </button>
+  );
+}
+
+/** Memoised: live data updates don't redraw the menu, only a page or role change does. */
+const BottomNav = memo(function BottomNav({ active, canManage, firstMemberId }: { active: string; canManage: boolean; firstMemberId?: string }) {
   const sheets = useSheets();
-  const { state, can } = useStore();
+  const can = { manage: canManage };
   const [fab, setFab] = useState(false);
   // Never leave the quick-action overlay covering a page after navigating away.
   useEffect(() => setFab(false), [active]);
@@ -76,15 +88,6 @@ function BottomNav({ active }: { active: string }) {
   const tabs = can.manage ? MANAGER_TABS : COLLEAGUE_TABS;
   const left = tabs.slice(0, 2);
   const right = tabs.slice(2);
-  const TabBtn = ({ t }: { t: Tab }) => {
-    const on = active === t.path;
-    return (
-      <button className={`nav-tab ${on ? 'active' : ''}`} onClick={() => navigate(t.path)} aria-current={on ? 'page' : undefined}>
-        <t.icon size={21} />
-        <span>{t.label}</span>
-      </button>
-    );
-  };
   return (
     <>
       {fab && <div className="fab-scrim" onClick={() => setFab(false)} />}
@@ -102,7 +105,7 @@ function BottomNav({ active }: { active: string }) {
             </span>
             Record report
           </button>
-          <button onClick={act(() => (state.members[0] ? sheets.requestReport(state.members[0].id) : sheets.newMember()))} style={{ ['--i' as string]: 2 }}>
+          <button onClick={act(() => (firstMemberId ? sheets.requestReport(firstMemberId) : sheets.newMember()))} style={{ ['--i' as string]: 2 }}>
             <span className="q-orb g3">
               <Send size={18} />
             </span>
@@ -118,7 +121,7 @@ function BottomNav({ active }: { active: string }) {
       )}
       <nav className={`bottom-nav glass-strong ${can.manage ? '' : 'four'}`} aria-label="Main">
         {left.map((t) => (
-          <TabBtn key={t.path} t={t} />
+          <TabBtn key={t.path} t={t} active={active} />
         ))}
         <button
           className={`fab ${fab ? 'open' : ''}`}
@@ -129,12 +132,12 @@ function BottomNav({ active }: { active: string }) {
           {fab ? <X size={24} /> : <Plus size={26} />}
         </button>
         {right.map((t) => (
-          <TabBtn key={t.path} t={t} />
+          <TabBtn key={t.path} t={t} active={active} />
         ))}
       </nav>
     </>
   );
-}
+});
 
 function Toasts() {
   const { toasts } = useToast();
