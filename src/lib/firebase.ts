@@ -14,6 +14,8 @@ export const auth = getAuth(app);
 // Offline cache: the app opens instantly from the device and syncs when the network is back.
 export const db = initializeFirestore(app, {
   ignoreUndefinedProperties: true,
+  // Some networks and proxies block streaming connections; long polling works everywhere (test/diagnostic switch).
+  experimentalForceLongPolling: import.meta.env.VITE_FIRESTORE_LONG_POLLING === '1',
   localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
 });
 

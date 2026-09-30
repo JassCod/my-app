@@ -48,9 +48,20 @@ export function AuthScreens() {
   const route = useRoute();
   const [workspace, setWorkspace] = useState<{ exists: boolean; teamName: string } | null>(null);
   useEffect(() => {
-    getDoc(doc(db, 'meta/workspace'))
-      .then((s) => setWorkspace({ exists: s.exists(), teamName: (s.data()?.teamName as string) ?? '' }))
-      .catch(() => setWorkspace({ exists: true, teamName: '' }));
+    let cancelled = false;
+    const check = (attempt: number) =>
+      getDoc(doc(db, 'meta/workspace'))
+        .then((s) => !cancelled && setWorkspace({ exists: s.exists(), teamName: (s.data()?.teamName as string) ?? '' }))
+        .catch(() => {
+          if (cancelled) return;
+          if (attempt < 3) setTimeout(() => check(attempt + 1), 1500 * (attempt + 1));
+          // Can't tell yet: still offer setup. The server refuses a second founder, so this is safe.
+          else setWorkspace({ exists: false, teamName: '' });
+        });
+    check(0);
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const [first, second] = route.parts;
